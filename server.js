@@ -106,12 +106,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// 根路徑重定向
-app.get('/', (req, res) => {
-  const prefix = (req.headers['x-forwarded-prefix'] || '').replace(/\/$/, '');
-  res.redirect(prefix + '/');
-});
-
 // 靜態前端
 app.use(express.static(path.join(__dirname, 'public')));
 
