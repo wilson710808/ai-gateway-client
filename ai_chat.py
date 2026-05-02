@@ -24,7 +24,7 @@ import requests
 # ============================================================
 GATEWAY_URL = os.environ.get(
     "GATEWAY_URL",
-    "https://43.135.184.31/ws/05-ai-gateway"
+    "http://www.herelai.fun/ws/05-ai-gateway"
 )
 APP_ID = os.environ.get("APP_ID", "python-client")
 USER_ID = os.environ.get("USER_ID", None)  # 不設則自動從公網 IP 取得
