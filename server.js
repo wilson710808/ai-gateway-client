@@ -13,8 +13,6 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 
-// 跳過自簽 SSL 證書驗證（本地開發環境）
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -114,7 +112,7 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '127.0.0.1', () => {
   console.log(`🤖 AI Chat Client 已啟動: http://0.0.0.0:${PORT}`);
   console.log(`🔗 Gateway: ${GATEWAY_URL}`);
   console.log(`📱 App ID: ${APP_ID}`);
