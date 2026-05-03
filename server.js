@@ -3,7 +3,7 @@
  *
  * 特點：
  * 1. 純靜態前端 + 輕量 Express 伺服器
- * 2. user_id 自動從客戶端公網 IP 生成，無需登入
+ * 2. user_id 固定為 Wilson（透過 AI Gateway 互動）
  * 3. 透過 Nginx 反代路徑與 AI Gateway 交互
  * 4. 多輪對話上下文記憶（原生 messages 陣列）
  * 5. 回覆完整性確認機制
@@ -215,7 +215,7 @@ app.post('/api/chat', async (req, res) => {
 
   const requestData = {
     app_id: APP_ID,
-    user_id: user_id || 'anonymous',
+    user_id: 'Wilson',  // 固定使用 Wilson
     query_data: message,
     messages,
   };
@@ -308,7 +308,7 @@ app.post('/api/batch-chat', async (req, res) => {
     try {
       const requestData = {
         app_id: APP_ID,
-        user_id: user_id || 'anonymous',
+        user_id: 'Wilson',  // 固定使用 Wilson
         query_data: content,
         messages: [{ role: 'user', content }]
       };
