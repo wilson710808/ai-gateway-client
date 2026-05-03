@@ -1,322 +1,396 @@
-# AI Gateway Client — 基於 AI Gateway 的簡易聊天客戶端
+# AI Gateway Client v2.0
 
-透過公網 IP 自動識別用戶，無需登入即可與 AI 進行多輪上下文對話。
+多平台 AI 客戶端 SDK，支持 Node.js / 瀏覽器 / React Native / 移動應用。
 
-## 功能特點
+## 核心功能
 
-- 🔑 **公網 IP 識別** — 用戶 ID 自動從公網 IP 生成（`ip_43_135_xxx_xxx`），無需登入
-- 📦 **消息封裝** — 透過公網 IP → 服務端代理 → AI Gateway，自動帶 `app_id` + `user_id`
-- 🧠 **多輪上下文記憶** — 原生 `messages` 陣列格式，AI 準確理解對話上下文
-- ✅ **回覆完整性確認** — 每條 AI 回覆標記「✅ 完整」或「⚠️ 可能截斷」
-- 📊 **回覆元數據** — 顯示耗時、上下文狀態、字數、完整性
+| 功能 | 說明 |
+|------|------|
+| 🌐 **多平台 SDK** | Node.js / 瀏覽器 / React Native / 移動應用 |
+| 🔄 **流式響應** | 支持 SSE 流式輸出，實時顯示 AI 回覆 |
+| 🔁 **自動重試** | 請求失敗自動重試，可配置次數和延遲 |
+| ⚡ **Rate Limiting** | 內置請求頻率限制，防止 API 過載 |
+| 📊 **完整日誌** | 請求日誌、統計信息、健康檢查 |
+| 📝 **批量處理** | 支持批量發送多條消息 |
+| 🛡️ **錯誤處理** | 完善的錯誤碼和異常處理 |
+
+---
 
 ## 快速開始
 
+### 1. 安裝
+
 ```bash
+npm install ai-gateway-client
+```
+
+### 2. 服務器啟動
+
+```bash
+# 克隆倉庫
+git clone https://github.com/wilson710808/ai-gateway-client.git
+cd ai-gateway-client
+
+# 安裝依賴
 npm install
-cp .env.example .env   # 編輯 .env 填入 Gateway URL
+
+# 配置環境變量
+cp .env.example .env
+# 編輯 .env 填入 Gateway 地址
+
+# 啟動服務器
 npm start
 ```
 
-## 環境變量
+### 3. 客戶端接入
+
+#### Node.js
+
+```javascript
+const { AIGatewayClient } = require('ai-gateway-client');
+
+const client = new AIGatewayClient({
+  baseUrl: 'http://localhost:3006',
+  appId: 'my-app'
+});
+
+async function main() {
+  // 單次聊天
+  const result = await client.chat('你好！');
+  console.log(result.response);
+  
+  // 多輪對話
+  const history = [];
+  const r1 = await client.chat('我叫小明', { history });
+  history.push({ role: 'user', content: '我叫小明' });
+  history.push({ role: 'assistant', content: r1.response });
+  
+  const r2 = await client.chat('我叫什麼？', { history });
+  console.log(r2.response);
+}
+
+main();
+```
+
+#### 瀏覽器
+
+```html
+<script src="client.js"></script>
+<script>
+  const client = new AIGatewayClient({
+    baseUrl: 'https://your-server.com',
+    appId: 'my-app'
+  });
+  
+  async function send() {
+    const result = await client.chat('Hello!');
+    console.log(result.response);
+  }
+</script>
+```
+
+#### React
+
+```jsx
+import { useAIGateway } from 'ai-gateway-client';
+
+function ChatApp() {
+  const { loading, error, history, sendMessage } = useAIGateway({
+    baseUrl: 'http://localhost:3006'
+  });
+  
+  const handleSend = async (message) => {
+    await sendMessage(message);
+  };
+  
+  return (
+    <div>
+      {history.map((msg, i) => (
+        <div key={i} className={msg.role}>
+          {msg.content}
+        </div>
+      ))}
+      <button onClick={() => handleSend('Hello!')}>發送</button>
+    </div>
+  );
+}
+```
+
+#### React Native
+
+```javascript
+import { AIGatewayClient } from 'ai-gateway-client';
+
+const client = new AIGatewayClient({
+  baseUrl: 'https://your-server.com',
+  appId: 'my-app'
+});
+
+// 在組件中使用
+const response = await client.chat('Hello from React Native!');
+console.log(response.response);
+```
+
+---
+
+## API 參考
+
+### AIGatewayClient
+
+```javascript
+const client = new AIGatewayClient(options);
+```
+
+**選項：**
+
+| 參數 | 類型 | 默認值 | 說明 |
+|------|------|--------|------|
+| `baseUrl` | string | http://localhost:3006 | 服務器地址 |
+| `appId` | string | default-app | 應用 ID |
+| `userId` | string | null | 用戶 ID |
+| `timeout` | number | 60000 | 超時時間（ms） |
+| `enableStream` | boolean | false | 啟用流式響應 |
+
+### chat(message, options)
+
+發送聊天請求。
+
+```javascript
+const result = await client.chat('你好', {
+  userId: 'user_123',
+  history: [{ role: 'user', content: '之前說的' }],
+  temperature: 0.7,
+  maxTokens: 2000
+});
+```
+
+**回覆格式：**
+
+```javascript
+{
+  success: true,
+  response: 'AI 回覆內容',
+  session_id: 'sess_xxx',
+  duration_ms: 1234,
+  context_used: true,
+  model_used: 'meta/llama-3.1-8b-instruct',
+  reply_meta: {
+    length: 85,
+    likely_complete: true,
+    history_turns: 2,
+    request_duration_ms: 1234
+  }
+}
+```
+
+### streamChat(message, options)
+
+流式聊天（Async Generator）。
+
+```javascript
+for await (const chunk of client.streamChat('你好')) {
+  console.log(chunk.content);
+}
+```
+
+### batchChat(messages, options)
+
+批量聊天。
+
+```javascript
+const results = await client.batchChat([
+  '問題1',
+  { content: '問題2', options: { temperature: 0.9 } },
+  '問題3'
+]);
+```
+
+### healthCheck()
+
+健康檢查。
+
+```javascript
+const health = await client.healthCheck();
+console.log(health.status); // 'ok'
+console.log(health.gateway); // Gateway 狀態
+```
+
+### getStats()
+
+獲取統計信息。
+
+```javascript
+const stats = await client.getStats();
+console.log(stats.stats.rate_limits.active);
+```
+
+---
+
+## 服務器 API
+
+### POST /api/chat
+
+聊天請求。
+
+```bash
+curl -X POST http://localhost:3006/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "你好",
+    "user_id": "user_123",
+    "history": [],
+    "stream": false
+  }'
+```
+
+### POST /api/batch-chat
+
+批量聊天。
+
+```bash
+curl -X POST http://localhost:3006/api/batch-chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": ["問題1", "問題2"],
+    "user_id": "user_123"
+  }'
+```
+
+### GET /api/health
+
+健康檢查。
+
+```bash
+curl http://localhost:3006/api/health
+```
+
+### GET /api/stats
+
+統計信息。
+
+```bash
+curl http://localhost:3006/api/stats
+```
+
+### GET /api/logs
+
+請求日誌。
+
+```bash
+curl http://localhost:3006/api/logs?limit=100
+```
+
+---
+
+## 環境配置
 
 | 變量 | 默認值 | 說明 |
 |------|--------|------|
 | `PORT` | 3006 | 服務端口 |
-| `GATEWAY_URL` | https://your-host/ws/05-ai-gateway | AI Gateway 地址 |
-| `APP_ID` | ai-chat-client | 應用識別 ID |
+| `GATEWAY_URL` | https://www.herelai.fun | AI Gateway 地址 |
+| `GATEWAY_API_PATH` | /api/query | API 路徑 |
+| `APP_ID` | ai-chat-client | 應用 ID |
+| `ENABLE_STREAM` | true | 啟用流式響應 |
+| `MAX_RETRIES` | 3 | 最大重試次數 |
+| `RETRY_DELAY` | 1000 | 重試延遲（ms） |
+| `RATE_LIMIT_WINDOW` | 60000 | Rate Limit 窗口（ms） |
+| `RATE_LIMIT_MAX` | 60 | 每窗口最大請求數 |
 
 ---
 
-## 📐 與 AI Gateway 的 TCP/IP 交互協議
-
-AI Gateway Client 透過 **HTTP POST over TCP/IP** 與 [AI Gateway](https://github.com/wilson710808/ai-gateway) 進行交互。以下是完整的通信協議說明。
-
-### 架構概覽
+## 架構圖
 
 ```
-┌──────────────┐     HTTP POST      ┌──────────────┐     HTTP POST      ┌──────────────┐
-│              │  ──────────────▶   │              │  ──────────────▶   │              │
-│  用戶瀏覽器   │    /api/chat       │  AI Chat     │    /api/query      │  AI Gateway  │
-│  (前端)      │  ◀──────────────   │  (Express)   │  ◀──────────────   │  (Express)   │
-│              │     JSON 回覆      │  :3006       │     JSON 回覆      │  :3005       │
-└──────────────┘                    └──────────────┘                    └──────────────┘
-                                          │                                  │
-                                          │    API Key 池化輪詢               │
-                                          │    ◀──────────────────────────▶   │
-                                          │                                  ▼
-                                                                          ┌──────────────┐
-                                                                          │  NVIDIA /    │
-                                                                          │  OpenAI /    │
-                                                                          │  Anthropic   │
-                                                                          └──────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      客戶端應用                              │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐       │
+│  │ Node.js │  │ 瀏覽器  │  │React    │  │  移動   │       │
+│  │         │  │         │  │Native   │  │  應用   │       │
+│  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘       │
+│       │            │            │            │             │
+│       └────────────┴────────────┴────────────┘             │
+│                         │                                 │
+│                    AIGatewayClient SDK                     │
+└─────────────────────────┬───────────────────────────────┘
+                          │ HTTP / HTTPS
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   AI Gateway Client Server                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+│  │ Rate     │  │ Retry    │  │ Stream   │  │ Health   │   │
+│  │ Limiting │  │ Mechanism│  │ Handler  │  │ Check    │   │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
+└─────────────────────────┬───────────────────────────────┘
+                          │ HTTP / HTTPS
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      AI Gateway                             │
+│                   (ai-gateway repo)                         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### 1️⃣ 客戶端 → AI Chat 服務 (前端 → 後端)
+---
 
-**端點**: `POST /api/chat`
+## 移動應用接入示例
 
-```http
-POST /ws/06-ai-chat/api/chat HTTP/1.1
-Host: 43.135.184.31
-Content-Type: application/json
-
-{
-  "message": "你好，我叫小明",
-  "user_id": "ip_43_135_184_31",
-  "history": [
-    { "role": "user", "content": "之前的第一句話" },
-    { "role": "ai", "content": "AI 之前的回覆" }
-  ]
-}
-```
-
-**欄位說明**：
-
-| 欄位 | 類型 | 必填 | 說明 |
-|------|------|------|------|
-| `message` | string | ✅ | 用戶當前輸入的訊息 |
-| `user_id` | string | ✅ | 由前端從公網 IP 自動生成（格式 `ip_{IP}`） |
-| `history` | array | ⬜ | 最近的對話歷史（最多 20 輪），用於多輪上下文 |
-
-**成功回覆**：
-
-```json
-{
-  "success": true,
-  "response": "你好小明！有什麼可以幫你的嗎？",
-  "session_id": "sess_ai-chat-client_ip_43_135_184_31_1777686094584",
-  "duration_ms": 771,
-  "context_used": true,
-  "reply_meta": {
-    "length": 85,
-    "likely_complete": true,
-    "model_used": "meta/llama-3.1-8b-instruct",
-    "history_turns": 2
-  }
-}
-```
-
-**失敗回覆**：
-
-```json
-{
-  "success": false,
-  "error": "無法連接 AI Gateway: Connection refused"
-}
-```
-
-### 2️⃣ AI Chat 服務 → AI Gateway (後端 → 後端)
-
-**端點**: `POST {GATEWAY_URL}/api/query`
-
-AI Chat 服務作為代理，將前端請求轉換為 AI Gateway 的標準格式：
-
-```http
-POST /ws/05-ai-gateway/api/query HTTP/1.1
-Host: 127.0.0.1
-Content-Type: application/json
-
-{
-  "app_id": "ai-chat-client",
-  "user_id": "ip_43_135_184_31",
-  "query_data": "你好，我叫小明",
-  "messages": [
-    { "role": "user", "content": "之前的第一句話" },
-    { "role": "assistant", "content": "AI 之前的回覆" },
-    { "role": "user", "content": "你好，我叫小明" }
-  ],
-  "options": {
-    "temperature": 0.7,
-    "max_tokens": 2000
-  }
-}
-```
-
-**欄位說明**：
-
-| 欄位 | 類型 | 必填 | 說明 |
-|------|------|------|------|
-| `app_id` | string | ✅ | 應用識別 ID（在 Gateway 中註冊） |
-| `user_id` | string | ✅ | 用戶唯一標識（本客戶端使用公網 IP） |
-| `query_data` | string | ⬜* | 用戶原始輸入（用於 raw data 記錄） |
-| `messages` | array | ⬜* | 標準 OpenAI 格式的 messages 陣列（多輪對話時優先使用） |
-| `options` | object | ⬜ | 可選參數（temperature、max_tokens） |
-
-> \* `query_data` 和 `messages` 至少需要提供一個。若同時提供 `messages`，AI Gateway 會直接使用 `messages` 陣列作為對話上下文，實現原生多輪記憶。
-
-**Gateway 回覆**：
-
-```json
-{
-  "success": true,
-  "session_id": "sess_ai-chat-client_ip_43_135_184_31_1777686094584",
-  "response": "你好小明！有什麼可以幫你的嗎？",
-  "local_path": "/data/ai-chat-client/ip_43_135_184_31",
-  "duration_ms": 771,
-  "context_used": false
-}
-```
-
-### 3️⃣ AI Gateway → AI 提供商 (Gateway → 外部 API)
-
-AI Gateway 從 API Key 池中輪詢取得可用 Key，然後向 AI 提供商發送請求：
-
-```http
-POST /v1/chat/completions HTTP/1.1
-Host: integrate.api.nvidia.com
-Content-Type: application/json
-Authorization: Bearer nvapi-xxxx
-
-{
-  "model": "meta/llama-3.1-8b-instruct",
-  "messages": [
-    { "role": "system", "content": "以下是該用戶的過往互動彙整..." },
-    { "role": "user", "content": "之前的第一句話" },
-    { "role": "assistant", "content": "AI 之前的回覆" },
-    { "role": "user", "content": "你好，我叫小明" }
-  ],
-  "temperature": 0.7,
-  "max_tokens": 2000
-}
-```
-
-### 4️⃣ 公網 IP 識別流程
-
-前端透過第三方 API（ipify.org）取得用戶的公網 IP，自動生成 `user_id`：
-
-```javascript
-// 前端自動執行
-const ipRes = await fetch('https://api.ipify.org?format=json');
-const ipData = await ipRes.json();        // { ip: "43.135.184.31" }
-const userId = `ip_${ipData.ip.replace(/\./g, '_')}`;
-// → "ip_43_135_184_31"
-```
-
-**為什麼用公網 IP？**
-- 無需登入系統，零門檻使用
-- 同一公網 IP 的用戶共享上下文歷史
-- AI Gateway 自動為每個 `app_id + user_id` 建立三層索引路徑
-
-### 5️⃣ 多輪對話上下文機制
-
-```
-第一輪:
-  history: []
-  messages: [user: "我叫小明，25歲"]
-  → AI: "你好小明！"
-
-第二輪:
-  history: [user: "我叫小明", ai: "你好小明！"]
-  messages: [user: "我叫小明", assistant: "你好小明！", user: "我叫什麼？"]
-  → AI: "你叫小明！"   ← ✅ 記住上下文
-
-第三輪:
-  history: [前兩輪完整對話]
-  messages: [全部歷史 + 當前問題]
-  → AI: "你叫小明，25歲"  ← ✅ 深度記憶
-```
-
-**關鍵設計**：
-- 前端維護 `messages[]` 陣列（本地狀態）
-- 每次請求帶最近 20 輪歷史
-- AI Gateway 的 `callAI` 將 `messages` 直接傳入 AI API（原生多輪格式）
-- 歷史彙整作為 `system` 訊息背景（長期記憶）
-
-### 6️⃣ 完整 TCP/IP 交互時序圖
-
-```
-用戶                AI Chat (前端)      AI Chat (後端)       AI Gateway         AI 提供商
- │                      │                    │                    │                  │
- │  輸入訊息             │                    │                    │                  │
- │─────────────────────▶│                    │                    │                  │
- │                      │  GET ipify.org     │                    │                  │
- │                      │───────▶(ipify)     │                    │                  │
- │                      │◀──────(公網IP)     │                    │                  │
- │                      │                    │                    │                  │
- │                      │  POST /api/chat    │                    │                  │
- │                      │  {message,         │                    │                  │
- │                      │   user_id,         │                    │                  │
- │                      │   history}         │                    │                  │
- │                      │───────────────────▶│                    │                  │
- │                      │                    │  POST /api/query   │                  │
- │                      │                    │  {app_id,          │                  │
- │                      │                    │   user_id,         │                  │
- │                      │                    │   messages[]}      │                  │
- │                      │                    │───────────────────▶│                  │
- │                      │                    │                    │  取得 API Key     │
- │                      │                    │                    │  (池化輪詢)       │
- │                      │                    │                    │                  │
- │                      │                    │                    │  POST /v1/chat/  │
- │                      │                    │                    │  completions     │
- │                      │                    │                    │─────────────────▶│
- │                      │                    │                    │  AI 回覆          │
- │                      │                    │                    │◀─────────────────│
- │                      │                    │                    │                  │
- │                      │                    │  {success,         │                  │
- │                      │                    │   response,        │                  │
- │                      │                    │   duration_ms}     │                  │
- │                      │                    │◀───────────────────│                  │
- │                      │  {success,         │                    │                  │
- │                      │   response,        │                    │                  │
- │                      │   reply_meta}      │                    │                  │
- │                      │◀───────────────────│                    │                  │
- │  顯示 AI 回覆         │                    │                    │                  │
- │◀─────────────────────│                    │                    │                  │
-```
-
-### 7️⃣ 其他語言接入範例
-
-#### JavaScript / React Native
-
-```javascript
-async function chatWithAI(message, userId, history = []) {
-  const res = await fetch('https://43.135.184.31/ws/06-ai-chat/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, user_id: userId, history })
-  });
-  const result = await res.json();
-  return result.success ? result : null;
-}
-```
-
-#### Swift / iOS
+### iOS (Swift)
 
 ```swift
-func chat(message: String, userId: String, history: [[String: String]] = []) async -> [String: Any]? {
-    var req = URLRequest(url: URL(string: "https://43.135.184.31/ws/06-ai-chat/api/chat")!)
-    req.httpMethod = "POST"
-    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    req.httpBody = try? JSONSerialization.data(withJSONObject: [
-        "message": message, "user_id": userId, "history": history
-    ])
-    let (data, _) = try? await URLSession.shared.data(for: req)
-    return try? JSONSerialization.jsonObject(with: data!) as? [String: Any]
+class AIGatewayService {
+    private let baseUrl: String
+    private let appId: String
+    
+    func chat(message: String, completion: @escaping (Result<String, Error>) -> Void) {
+        var request = URLRequest(url: URL(string: "\(baseUrl)/api/chat")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body: [String: Any] = [
+            "message": message,
+            "app_id": appId
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            if let data = data,
+               let result = try? JSONDecoder().decode(ChatResponse.self, from: data) {
+                completion(.success(result.response))
+            }
+        }.resume()
+    }
 }
 ```
 
-#### Kotlin / Android
+### Android (Kotlin)
 
 ```kotlin
-suspend fun chat(message: String, userId: String, history: List<Map<String, String>> = emptyList()): JSONObject? {
+suspend fun chat(message: String): String {
     val json = JSONObject().apply {
         put("message", message)
-        put("user_id", userId)
-        put("history", JSONArray(history.map { JSONObject(it) }))
+        put("app_id", appId)
     }
+    
     val body = json.toString().toRequestBody("application/json".toMediaType())
-    val req = Request.Builder()
-        .url("https://43.135.184.31/ws/06-ai-chat/api/chat")
-        .post(body).build()
-    return OkHttpClient().newCall(req).execute().use { resp ->
-        JSONObject(resp.body!!.string())
+    val request = Request.Builder()
+        .url("$baseUrl/api/chat")
+        .post(body)
+        .build()
+    
+    return withContext(Dispatchers.IO) {
+        val response = OkHttpClient().newCall(request).execute()
+        val body = response.body?.string()
+        val json = JSONObject(body!!)
+        json.getString("response")
     }
 }
 ```
 
 ---
 
-## 授權
+## 許可證
 
-MIT
+MIT License

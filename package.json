@@ -1,13 +1,32 @@
 {
-  "name": "ai-chat-client",
-  "version": "1.0.0",
-  "description": "AI Chat Client — 基於 AI Gateway 的簡易聊天介面",
+  "name": "ai-gateway-client",
+  "version": "2.2.0",
+  "description": "AI Gateway Client — 基於 AI Gateway 的聊天客戶端，支持多輪對話與速率限制",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
+  "engines": {
+    "node": ">=18.0.0"
   },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "keywords": [
+    "ai",
+    "gateway",
+    "chatbot",
+    "nvidia",
+    "llama",
+    "client"
+  ],
+  "author": "Wilson",
+  "license": "MIT",
   "dependencies": {
-    "express": "^4.21.0",
-    "dotenv": "^16.4.0"
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wilson710808/ai-gateway-client.git"
   }
 }
