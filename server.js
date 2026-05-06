@@ -1,36 +1,31 @@
 /**
- * AI Gateway Client v2.2 — 基於 AI Gateway 的聊天客戶端
+ * AI Gateway Client v2.3 — 基於 AI Gateway 的聊天客戶端
  *
  * 特點：
  * 1. 純靜態前端 + 輕量 Express 伺服器
  * 2. user_id 固定為 Wilson（透過 AI Gateway 互動）
- * 3. 透過 Nginx 反代路徑與 AI Gateway 交互
+ * 3. 內部直連 AI Gateway（http://127.0.0.1:3005）
  * 4. 多輪對話上下文記憶（原生 messages 陣列）
  * 5. 回覆完整性確認機制
  * 6. 自動重試 + IP 速率限制
  *
- * v2.2 安全+效能修復：
- * - 輸入校驗（message 長度、user_id 格式）
- * - CORS 白名單制
- * - Admin API 認證
- * - 安全標頭
- * - JSON body 降為 1mb
- * - fetchWithRetry 超時對齊 Gateway 30s
- * - rateLimitMap 定時清理
- * - batch-chat 併發限制
- * - SIGINT/SIGTERM 優雅關閉
+ * v2.3 修復：
+ * - 使用 Node http 模組取代原生 fetch（解決 Node v22 undici 連接池卡住問題）
+ * - 內部直連 Gateway，不再繞 Nginx/HTTPS
+ * - 移除 https.Agent 依賴
+ * - 全局錯誤處理防止進程崩潰
  */
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
-const https = require('https');
+const http = require('http');
 const crypto = require('crypto');
 
 // ============================================
 // 配置
 // ============================================
 const PORT = parseInt(process.env.PORT || '3006');
-const GATEWAY_URL = process.env.GATEWAY_URL || 'https://www.herelai.fun/ws/05-ai-gateway';
+const GATEWAY_URL = process.env.GATEWAY_URL || 'http://127.0.0.1:3005';
 const GATEWAY_API_PATH = process.env.GATEWAY_API_PATH || '/api/query';
 const APP_ID = process.env.APP_ID || 'ai-chat-client';
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '2');
@@ -67,16 +62,13 @@ function checkRateLimit(userId) {
   const now = Date.now();
   const key = userId || 'anonymous';
   const record = rateLimitMap.get(key);
-
   if (!record || now > record.resetTime) {
     rateLimitMap.set(key, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
     return true;
   }
-
   if (record.count >= RATE_LIMIT_MAX) {
     return false;
   }
-
   record.count++;
   return true;
 }
@@ -108,23 +100,54 @@ function logRequest(req) {
 }
 
 // ============================================
-// 重試機制（超時對齊 Gateway 30s）
+// HTTP 請求工具（使用 Node http 模組）
 // ============================================
+function httpRequest(urlStr, options = {}, timeoutMs = 35000) {
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(urlStr);
+    const data = options.body || '';
+    const req = http.request({
+      hostname: urlObj.hostname,
+      port: urlObj.port || 80,
+      path: urlObj.pathname + urlObj.search,
+      method: options.method || 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Connection': 'close',
+        'Content-Length': Buffer.byteLength(data)
+      }
+    }, res => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        if (res.statusCode >= 500) {
+          return reject(new Error('HTTP ' + res.statusCode));
+        }
+        resolve({
+          ok: res.statusCode < 400,
+          status: res.statusCode,
+          json: () => JSON.parse(body)
+        });
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Request timeout'));
+    });
+    req.setTimeout(timeoutMs);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
 async function fetchWithRetry(url, options, retries = MAX_RETRIES) {
   for (let i = 0; i < retries; i++) {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 35000); // Gateway 30s + 緩衝
-      const response = await fetch(url, { ...options, signal: controller.signal });
-      clearTimeout(timeout);
-
-      if (!response.ok && response.status >= 500) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      return response;
+      return await httpRequest(url, options);
     } catch (error) {
       if (i === retries - 1) throw error;
-      console.log(`[Retry] 請求失敗，${RETRY_DELAY * (i + 1)}ms 後重試 (${i + 1}/${retries})`);
+      console.log(`[Retry] 請求失敗: ${error.message}, ${RETRY_DELAY * (i + 1)}ms 後重試 (${i + 1}/${retries})`);
       await new Promise(r => setTimeout(r, RETRY_DELAY * (i + 1)));
     }
   }
@@ -163,8 +186,8 @@ const corsOptions = {
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
-app.use(require('cors')(corsOptions));
 
+app.use(require('cors')(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -191,7 +214,6 @@ app.post('/api/chat', async (req, res) => {
   if (msgErr) {
     return res.status(400).json({ success: false, error: msgErr, code: 'INVALID_MESSAGE' });
   }
-
   if (user_id && !validateUserId(user_id)) {
     return res.status(400).json({ success: false, error: 'user_id 格式無效', code: 'INVALID_USER_ID' });
   }
@@ -207,7 +229,7 @@ app.post('/api/chat', async (req, res) => {
     for (const h of history.slice(-20)) {
       messages.push({
         role: h.role === 'user' ? 'user' : 'assistant',
-        content: String(h.content).substring(0, 5000) // 防止超長歷史
+        content: String(h.content).substring(0, 5000)
       });
     }
   }
@@ -215,24 +237,17 @@ app.post('/api/chat', async (req, res) => {
 
   const requestData = {
     app_id: APP_ID,
-    user_id: 'Wilson',  // 固定使用 Wilson
+    user_id: 'Wilson',
     query_data: message,
     messages,
   };
 
   try {
-    const fetchOptions = {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestData),
-    };
-
-    if (GATEWAY_URL.startsWith('https://')) {
-      fetchOptions.agent = new https.Agent({ rejectUnauthorized: true });
-    }
-
     const startTime = Date.now();
-    const response = await fetchWithRetry(`${GATEWAY_URL}${GATEWAY_API_PATH}`, fetchOptions);
+    const response = await fetchWithRetry(`${GATEWAY_URL}${GATEWAY_API_PATH}`, {
+      method: 'POST',
+      body: JSON.stringify(requestData)
+    });
     const data = await response.json();
     const duration = Date.now() - startTime;
 
@@ -281,7 +296,6 @@ app.post('/api/batch-chat', async (req, res) => {
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ success: false, error: 'messages 必須是 non-empty array' });
   }
-
   if (messages.length > MAX_BATCH_SIZE) {
     return res.status(400).json({
       success: false,
@@ -289,7 +303,6 @@ app.post('/api/batch-chat', async (req, res) => {
       code: 'BATCH_TOO_LARGE'
     });
   }
-
   if (!checkRateLimit(user_id)) {
     return res.status(429).json({ success: false, error: '請求太頻繁', code: 'RATE_LIMITED' });
   }
@@ -308,24 +321,16 @@ app.post('/api/batch-chat', async (req, res) => {
     try {
       const requestData = {
         app_id: APP_ID,
-        user_id: 'Wilson',  // 固定使用 Wilson
+        user_id: 'Wilson',
         query_data: content,
         messages: [{ role: 'user', content }]
       };
 
-      const fetchOptions = {
+      const response = await fetchWithRetry(`${GATEWAY_URL}${GATEWAY_API_PATH}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestData)
-      };
-
-      if (GATEWAY_URL.startsWith('https://')) {
-        fetchOptions.agent = new https.Agent({ rejectUnauthorized: true });
-      }
-
-      const response = await fetchWithRetry(`${GATEWAY_URL}${GATEWAY_API_PATH}`, fetchOptions);
+      });
       const data = await response.json();
-
       results.push({
         index: msg.index || results.length,
         success: data.success,
@@ -341,7 +346,6 @@ app.post('/api/batch-chat', async (req, res) => {
       });
     }
   }
-
   res.json({ success: true, results });
 });
 
@@ -350,7 +354,7 @@ app.get('/api/health', async (req, res) => {
   const status = {
     status: 'ok',
     service: 'ai-gateway-client',
-    version: '2.2.0',
+    version: '2.3.0',
     gateway_url: GATEWAY_URL,
     app_id: APP_ID,
     rate_limit: { window_ms: RATE_LIMIT_WINDOW, max_requests: RATE_LIMIT_MAX },
@@ -359,13 +363,9 @@ app.get('/api/health', async (req, res) => {
   };
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const response = await fetch(`${GATEWAY_URL}/api/health`, { signal: controller.signal });
-    clearTimeout(timeout);
-
+    const response = await httpRequest(`${GATEWAY_URL}/api/health`, { method: 'GET' }, 5000);
     if (response.ok) {
-      status.gateway = { status: 'ok', ...(await response.json()) };
+      status.gateway = { status: 'ok', ...response.json() };
     } else {
       status.gateway = { status: 'error', code: response.status };
     }
@@ -411,12 +411,21 @@ app.get('*', (req, res) => {
 // 啟動 + 優雅關閉
 // ============================================
 const server = app.listen(PORT, '127.0.0.1', () => {
-  console.log(`🤖 AI Gateway Client v2.2 已啟動: http://127.0.0.1:${PORT}`);
+  console.log(`🤖 AI Gateway Client v2.3 已啟動: http://127.0.0.1:${PORT}`);
   console.log(`🔗 Gateway: ${GATEWAY_URL}`);
   console.log(`📱 App ID: ${APP_ID}`);
   console.log(`⚡ Rate Limit: ${RATE_LIMIT_MAX}/分鐘`);
   console.log(`🔐 Admin Token: ${ADMIN_TOKEN.substring(0, 8)}...`);
   console.log(`🛡️ CORS: ${CORS_ORIGINS || '(同源限制)'}`);
+});
+
+// 全局錯誤處理 — 防止未捕獲的異常導致進程崩潰
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server] 未處理的 Promise 拒絕:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[Server] 未捕獲的異常:', err.message);
 });
 
 function gracefulShutdown(signal) {
